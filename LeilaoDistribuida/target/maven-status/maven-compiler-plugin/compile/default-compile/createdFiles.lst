@@ -1,0 +1,12 @@
+gateway\Gateway$ClienteGatewayTCP.class
+models\ItemLeilao.class
+protocol\HTTPHandler.class
+database\BancoDados.class
+protocol\UDPHandler.class
+gateway\Gateway.class
+protocol\TCPHandler$ClienteTCP.class
+models\Lance.class
+protocol\TCPHandler.class
+gateway\Gateway$GatewayHttpHandler.class
+protocol\HTTPHandler$RegistrarLanceHandler.class
+protocol\HTTPHandler$CadastrarItemHandler.class
