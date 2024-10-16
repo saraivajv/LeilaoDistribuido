@@ -7,6 +7,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.sun.net.httpserver.HttpServer;
+
+import paxos.PaxosProposer;
+
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpExchange;
 
@@ -435,6 +438,22 @@ public class Gateway {
         logger.info("Servidores TCP Ativos: {}", getPortasTCPAtivas());
         logger.info("Servidores UDP Ativos: {}", getPortasUDPAtivas());
     }
+    
+    
+ // Add this getter method to retrieve the list of HTTP handlers
+    public List<HTTPHandler> getHttpHandlers() {
+        return httpHandlers; // Returns the list of HTTPHandlers
+    }
+
+    // Add this getter method to retrieve the list of TCP handlers
+    public List<TCPHandler> getTcpHandlers() {
+        return tcpHandlers; // Returns the list of TCPHandlers
+    }
+
+    // Add this getter method to retrieve the list of UDP handlers
+    public List<UDPHandler> getUdpHandlers() {
+        return udpHandlers; // Returns the list of UDPHandlers
+    }
 
     /**
      * Método para parar o Gateway e todos os servidores internos.
@@ -509,9 +528,11 @@ public class Gateway {
     static class GatewayHttpHandler implements HttpHandler {
         private final Gateway gateway;
         private static final Logger logger = LoggerFactory.getLogger(GatewayHttpHandler.class);
+        private final PaxosProposer proposer;  // Adiciona o Proposer ao handler
 
         public GatewayHttpHandler(Gateway gateway) {
             this.gateway = gateway;
+            this.proposer = new PaxosProposer(gateway);  // Inicializa o Proposer
         }
 
         @Override
@@ -538,7 +559,6 @@ public class Gateway {
          * Método para lidar com a requisição de cadastro de item.
          */
         private void handleCadastrarItem(HttpExchange exchange) throws IOException {
-            // Ler o corpo da requisição
             InputStream is = exchange.getRequestBody();
             String corpo = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))
                     .lines()
@@ -561,17 +581,20 @@ public class Gateway {
                 return;
             }
 
-            // Selecionar o próximo servidor HTTP interno usando Round Robin
+         // Verifica se há um servidor HTTP interno disponível
             HTTPHandler httpHandler = gateway.getNextHTTPHandler();
             if (httpHandler != null && httpHandler.isRunning()) {
-                // Enviar requisição HTTP para o servidor interno
-                String resposta = enviarRequisicaoHTTP(httpHandler.getPorta(), "/cadastrarItem", corpo);
-
-                // Logar a porta para a qual a requisição foi redirecionada
-                logger.info("Requisição redirecionada para o servidor HTTP na porta {}", httpHandler.getPorta());
-
-                responder(exchange, 200, resposta);
+                // Propor o cadastro do item no Paxos
+                String proposta = "CADASTRAR_ITEM;" + nome + ";" + descricao + ";" + precoInicial;
+                if (proposer.propose(proposta)) {
+                    // Consenso alcançado, prosseguir com o cadastro do item
+                    responder(exchange, 200, "Item cadastrado com sucesso.");
+                } else {
+                    // Consenso falhou
+                    responder(exchange, 500, "Falha ao cadastrar o item.");
+                }
             } else {
+                // Nenhum servidor HTTP interno disponível
                 responder(exchange, 500, "Nenhum servidor HTTP interno disponível para processar a requisição.");
             }
         }
@@ -605,16 +628,20 @@ public class Gateway {
             }
 
             // Selecionar o próximo servidor HTTP interno usando Round Robin
+            // Verifica se há um servidor HTTP interno disponível
             HTTPHandler httpHandler = gateway.getNextHTTPHandler();
             if (httpHandler != null && httpHandler.isRunning()) {
-                // Enviar requisição HTTP para o servidor interno
-                String resposta = enviarRequisicaoHTTP(httpHandler.getPorta(), "/registrarLance", corpo);
-
-                // Logar a porta para a qual a requisição foi redirecionada
-                logger.info("Requisição redirecionada para o servidor HTTP na porta {}", httpHandler.getPorta());
-
-                responder(exchange, 200, resposta);
+                // Propor o registro do lance no Paxos
+                String proposta = "REGISTRAR_LANCE;" + idItem + ";" + clienteNome + ";" + valor;
+                if (proposer.propose(proposta)) {
+                    // Consenso alcançado, registrar o lance
+                    responder(exchange, 200, "Lance registrado com sucesso.");
+                } else {
+                    // Consenso falhou
+                    responder(exchange, 500, "Falha ao registrar o lance.");
+                }
             } else {
+                // Nenhum servidor HTTP interno disponível
                 responder(exchange, 500, "Nenhum servidor HTTP interno disponível para processar a requisição.");
             }
         }
@@ -693,7 +720,7 @@ public class Gateway {
                     // Processamento da requisição
                     String[] partes = mensagem.split(";");
                     if (partes.length < 2) {
-                        String resposta = "Formato inválido.\n";
+                        String resposta = "Erro: Formato inválido.\n";
                         out.write(resposta);
                         out.flush();
                         return;
@@ -704,7 +731,7 @@ public class Gateway {
 
                     if ("cadastrarItem".equalsIgnoreCase(operacao)) {
                         if (partes.length != 4) {
-                            resposta = "Formato inválido para cadastrarItem. Use: cadastrarItem;nome;descricao;precoInicial\n";
+                            resposta = "Erro: Formato inválido para cadastrarItem. Use: cadastrarItem;nome;descricao;precoInicial\n";
                             out.write(resposta);
                             out.flush();
                             return;
@@ -715,7 +742,7 @@ public class Gateway {
                         try {
                             precoInicial = Double.parseDouble(partes[3]);
                         } catch (NumberFormatException e) {
-                            resposta = "Preço inicial inválido.\n";
+                            resposta = "Erro: Preço inicial inválido.\n";
                             out.write(resposta);
                             out.flush();
                             return;
@@ -731,13 +758,15 @@ public class Gateway {
                             // Logar a porta para a qual a requisição foi redirecionada
                             logger.info("Requisição TCP redirecionada para o servidor TCP na porta {}", tcpHandler.getPorta());
                         } else {
-                            resposta = "Nenhum servidor TCP interno disponível para processar a requisição.\n";
-                            out.write(resposta);
+                            // Enviar erro para o cliente quando não há servidores TCP internos
+                            resposta = "Erro: Nenhum servidor TCP interno disponível para processar a requisição.\n";
+                            logger.error("Nenhum servidor TCP interno disponível.");
+                            out.write(resposta);  // Envia a resposta de erro ao JMeter
                             out.flush();
                         }
                     } else if ("registrarLance".equalsIgnoreCase(operacao)) {
                         if (partes.length != 4) {
-                            resposta = "Formato inválido para registrarLance. Use: registrarLance;idItem;cliente;valor\n";
+                            resposta = "Erro: Formato inválido para registrarLance. Use: registrarLance;idItem;cliente;valor\n";
                             out.write(resposta);
                             out.flush();
                             return;
@@ -749,7 +778,7 @@ public class Gateway {
                             idItem = Integer.parseInt(partes[1]);
                             valor = Double.parseDouble(partes[3]);
                         } catch (NumberFormatException e) {
-                            resposta = "ID do item ou valor inválido.\n";
+                            resposta = "Erro: ID do item ou valor inválido.\n";
                             out.write(resposta);
                             out.flush();
                             return;
@@ -765,12 +794,14 @@ public class Gateway {
                             // Logar a porta para a qual a requisição foi redirecionada
                             logger.info("Requisição TCP redirecionada para o servidor TCP na porta {}", tcpHandler.getPorta());
                         } else {
-                            resposta = "Nenhum servidor TCP interno disponível para processar a requisição.\n";
-                            out.write(resposta);
+                            // Enviar erro para o cliente quando não há servidores TCP internos
+                            resposta = "Erro: Nenhum servidor TCP interno disponível para processar a requisição.\n";
+                            logger.error("Nenhum servidor TCP interno disponível.");
+                            out.write(resposta);  // Envia a resposta de erro ao JMeter
                             out.flush();
                         }
                     } else {
-                        resposta = "Operação desconhecida.\n";
+                        resposta = "Erro: Operação desconhecida.\n";
                         out.write(resposta);
                         out.flush();
                     }
@@ -786,5 +817,7 @@ public class Gateway {
                 }
             }
         }
+
+
     }
 }

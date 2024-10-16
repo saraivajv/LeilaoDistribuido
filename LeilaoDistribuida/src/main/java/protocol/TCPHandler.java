@@ -1,6 +1,8 @@
 package protocol;
 
 import database.BancoDados;
+import paxos.PaxosAcceptor;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -16,9 +18,37 @@ public class TCPHandler implements Runnable {
     private AtomicBoolean running = new AtomicBoolean(false);
     private ServerSocket serverSocket;
     private Thread thread;
+    private int promisedProposal = -1;  // Armazena a maior proposta prometida
+    private int acceptedProposal = -1;  // Armazena a maior proposta aceita
+    private String acceptedValue = null;  // Armazena o valor da proposta aceita
+    private final PaxosAcceptor paxosAcceptor;
+
+    // Envia um Prepare e retorna se pode prometer aceitar propostas maiores
+    public boolean sendPrepare(int proposalNumber) {
+        if (proposalNumber > promisedProposal) {
+            promisedProposal = proposalNumber;
+            return true;  // Promete não aceitar propostas menores
+        }
+        return false;  // Rejeita a proposta
+    }
+
+    // Envia um Accept e retorna se aceita a proposta
+    public boolean sendAccept(int proposalNumber, String value) {
+        if (proposalNumber >= promisedProposal) {
+            acceptedProposal = proposalNumber;
+            acceptedValue = value;
+            return true;  // Aceita a proposta
+        }
+        return false;  // Rejeita a proposta
+    }
+
+    public String getAcceptedValue() {
+        return acceptedValue;
+    }
 
     public TCPHandler(int porta) {
         this.porta = porta;
+        this.paxosAcceptor = new PaxosAcceptor();
     }
 
     public int getPorta() {
@@ -96,7 +126,7 @@ public class TCPHandler implements Runnable {
                     // Processamento da requisição
                     String[] partes = mensagem.split(";");
                     if (partes.length < 2) {
-                        String resposta = "Formato inválido.\n";
+                        String resposta = "Erro: Formato inválido.\n";
                         out.write(resposta);
                         out.flush();
                         return;
@@ -107,7 +137,7 @@ public class TCPHandler implements Runnable {
 
                     if ("cadastrarItem".equalsIgnoreCase(operacao)) {
                         if (partes.length != 4) {
-                            resposta = "Formato inválido para cadastrarItem. Use: cadastrarItem;nome;descricao;precoInicial\n";
+                            resposta = "Erro: Formato inválido para cadastrarItem. Use: cadastrarItem;nome;descricao;precoInicial\n";
                             out.write(resposta);
                             out.flush();
                             return;
@@ -118,19 +148,22 @@ public class TCPHandler implements Runnable {
                         try {
                             precoInicial = Double.parseDouble(partes[3]);
                         } catch (NumberFormatException e) {
-                            resposta = "Preço inicial inválido.\n";
+                            resposta = "Erro: Preço inicial inválido.\n";
                             out.write(resposta);
                             out.flush();
                             return;
                         }
 
-                        // Chama o método cadastrarItem do TCPHandler atual
+                        // Verificar se há servidores disponíveis
                         resposta = cadastrarItem(nome, descricao, precoInicial);
+                        if (resposta.startsWith("Erro:")) {
+                            logger.warn("Erro ao cadastrar item: {}", resposta);
+                        }
                         out.write(resposta);
                         out.flush();
                     } else if ("registrarLance".equalsIgnoreCase(operacao)) {
                         if (partes.length != 4) {
-                            resposta = "Formato inválido para registrarLance. Use: registrarLance;idItem;cliente;valor\n";
+                            resposta = "Erro: Formato inválido para registrarLance. Use: registrarLance;idItem;cliente;valor\n";
                             out.write(resposta);
                             out.flush();
                             return;
@@ -142,18 +175,21 @@ public class TCPHandler implements Runnable {
                             idItem = Integer.parseInt(partes[1]);
                             valor = Double.parseDouble(partes[3]);
                         } catch (NumberFormatException e) {
-                            resposta = "ID do item ou valor inválido.\n";
+                            resposta = "Erro: ID do item ou valor inválido.\n";
                             out.write(resposta);
                             out.flush();
                             return;
                         }
 
-                        // Chama o método registrarLance do TCPHandler atual
+                        // Verificar se há servidores disponíveis
                         resposta = registrarLance(idItem, clienteNome, valor);
+                        if (resposta.startsWith("Erro:")) {
+                            logger.warn("Erro ao registrar lance: {}", resposta);
+                        }
                         out.write(resposta);
                         out.flush();
                     } else {
-                        resposta = "Operação desconhecida.\n";
+                        resposta = "Erro: Operação desconhecida.\n";
                         out.write(resposta);
                         out.flush();
                     }
@@ -185,7 +221,7 @@ public class TCPHandler implements Runnable {
         if (id != -1) {
             return "Item cadastrado com ID: " + id;
         } else {
-            return "Erro ao cadastrar item.";
+            return "Erro: Não foi possível cadastrar o item.";
         }
     }
 
@@ -203,7 +239,7 @@ public class TCPHandler implements Runnable {
         if (sucesso) {
             return "Lance registrado com sucesso.";
         } else {
-            return "Lance inferior ao maior lance atual.";
+            return "Erro: Lance inferior ao maior lance atual.";
         }
     }
 }

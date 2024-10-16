@@ -1,6 +1,8 @@
 package protocol;
 
 import database.BancoDados;
+import paxos.PaxosAcceptor;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,9 +26,37 @@ public class HTTPHandler implements Runnable {
     private AtomicBoolean running = new AtomicBoolean(false);
     private HttpServer serverHTTP;
     private ExecutorService executorService;
+    private int promisedProposal = -1;  // Armazena a maior proposta prometida
+    private int acceptedProposal = -1;  // Armazena a maior proposta aceita
+    private String acceptedValue = null;  // Armazena o valor da proposta aceita
+    private final PaxosAcceptor paxosAcceptor;
+
+    // Envia um Prepare e retorna se pode prometer aceitar propostas maiores
+    public boolean sendPrepare(int proposalNumber) {
+        if (proposalNumber > promisedProposal) {
+            promisedProposal = proposalNumber;
+            return true;  // Promete não aceitar propostas menores
+        }
+        return false;  // Rejeita a proposta
+    }
+
+    // Envia um Accept e retorna se aceita a proposta
+    public boolean sendAccept(int proposalNumber, String value) {
+        if (proposalNumber >= promisedProposal) {
+            acceptedProposal = proposalNumber;
+            acceptedValue = value;
+            return true;  // Aceita a proposta
+        }
+        return false;  // Rejeita a proposta
+    }
+
+    public String getAcceptedValue() {
+        return acceptedValue;
+    }
 
     public HTTPHandler(int porta) {
         this.porta = porta;
+        this.paxosAcceptor = new PaxosAcceptor();
     }
 
     public int getPorta() {
