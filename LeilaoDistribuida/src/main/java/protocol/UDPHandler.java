@@ -1,17 +1,21 @@
 package protocol;
 
 import database.BancoDados;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
-import java.net.InetAddress;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 public class UDPHandler {
 
+    private static final Logger logger = LoggerFactory.getLogger(UDPHandler.class);  // Logger declaration
     private static BancoDados bancoDados;
 
     public static void main(String[] args) {
@@ -21,17 +25,18 @@ public class UDPHandler {
         bancoDados = BancoDados.getInstance();
 
         try (DatagramSocket socket = new DatagramSocket(porta)) {
-            System.out.println("Servidor UDP rodando na porta " + porta);
+            logger.info("Servidor UDP rodando na porta " + porta);
 
-            // Registrar o servidor UDP no Gateway
-            registrarNoGateway("udp", porta);  // Registrar dinamicamente no Gateway
+            // Call to registrarNoGateway to register this UDP server at the Gateway
+            registrarNoGateway("udp", porta);  // Register the server dynamically
 
             byte[] buffer = new byte[1024];
             while (true) {
                 DatagramPacket request = new DatagramPacket(buffer, buffer.length);
                 socket.receive(request);
-                String mensagem = new String(request.getData(), 0, request.getLength(), StandardCharsets.UTF_8);  // Certifique-se que está lendo como UTF-8
-                System.out.println("Recebido via UDP: " + mensagem);
+                String mensagem = new String(request.getData(), 0, request.getLength(), StandardCharsets.UTF_8);  
+                
+                logger.info("Recebido via UDP: " + mensagem);
 
                 String resposta;
 
@@ -61,17 +66,20 @@ public class UDPHandler {
                     resposta = "Mensagem inválida";
                 }
 
-                byte[] responseBytes = resposta.getBytes(StandardCharsets.UTF_8);  // Codificar resposta como UTF-8
+                logger.info("Resposta gerada para o cliente: " + resposta);
+
+                byte[] responseBytes = resposta.getBytes(StandardCharsets.UTF_8);
                 DatagramPacket response = new DatagramPacket(responseBytes, responseBytes.length, request.getAddress(), request.getPort());
                 socket.send(response);
+                logger.info("Resposta enviada para o cliente.");
             }
 
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("Erro no servidor UDP: " + e.getMessage(), e);
         }
     }
 
-    // Método para registrar dinamicamente o servidor UDP no Gateway
+    // Method to register the server in the Gateway
     private static void registrarNoGateway(String tipo, int porta) {
         try {
             URL url = new URL("http://localhost:9000/registerServer");
@@ -80,7 +88,6 @@ public class UDPHandler {
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "text/plain; charset=UTF-8");
 
-            // Mensagem enviada para registrar: "udp;porta"
             String corpo = tipo + ";" + porta;
             try (OutputStream os = conn.getOutputStream()) {
                 byte[] input = corpo.getBytes(StandardCharsets.UTF_8);
@@ -88,10 +95,10 @@ public class UDPHandler {
             }
 
             int responseCode = conn.getResponseCode();
-            System.out.println("Servidor UDP registrado no Gateway com status: " + responseCode);
+            logger.info("Servidor UDP registrado no Gateway com status: " + responseCode + ", na porta: " + porta);
 
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("Erro ao registrar no Gateway: " + e.getMessage(), e);
         }
     }
 }

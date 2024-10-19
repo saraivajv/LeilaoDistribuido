@@ -208,22 +208,28 @@ public class Gateway {
                         .lines()
                         .collect(Collectors.joining("\n"));
 
-                // Não adicionar o comando na frente do corpo da mensagem
                 String comando = body;
 
-                // Verificar o endpoint correto e encaminhar
-                if ("/cadastrarItem".equalsIgnoreCase(caminho) || "/registrarLance".equalsIgnoreCase(caminho)) {
-                    // Enviar a requisição formatada para o servidor HTTP interno
-                    String respostaServidorInterno = gateway.enviarParaServidorInternoHTTP(gateway.getNextHTTPHandlerPort(), comando, caminho);
+                try {
+                    if ("/cadastrarItem".equalsIgnoreCase(caminho) || "/registrarLance".equalsIgnoreCase(caminho)) {
+                        String respostaServidorInterno = gateway.enviarParaServidorInternoHTTP(gateway.getNextHTTPHandlerPort(), comando, caminho);
 
-                    // Responder ao cliente
-                    exchange.sendResponseHeaders(200, respostaServidorInterno.getBytes().length);
+                        exchange.sendResponseHeaders(200, respostaServidorInterno.getBytes().length);
+                        OutputStream os = exchange.getResponseBody();
+                        os.write(respostaServidorInterno.getBytes());
+                        os.close();
+                    } else {
+                        exchange.sendResponseHeaders(404, 0);
+                        exchange.close();
+                    }
+                } catch (IllegalStateException | IOException e) {
+                    // Return an error response when no internal server is available
+                    String errorMessage = "Erro: Nenhum servidor HTTP disponível.";
+                    logger.error(errorMessage);
+                    exchange.sendResponseHeaders(500, errorMessage.getBytes().length);
                     OutputStream os = exchange.getResponseBody();
-                    os.write(respostaServidorInterno.getBytes());
+                    os.write(errorMessage.getBytes(StandardCharsets.UTF_8));
                     os.close();
-                } else {
-                    exchange.sendResponseHeaders(404, 0);
-                    exchange.close();
                 }
             } else {
                 exchange.sendResponseHeaders(405, "Método não permitido".getBytes().length);
@@ -233,6 +239,7 @@ public class Gateway {
             }
         }
     }
+
 
 
  // Handler para requisições TCP
@@ -253,7 +260,6 @@ public class Gateway {
                 String body = in.readLine();
 
                 if (body != null && !body.isEmpty()) {
-                    // Montar o comando no formato correto para os servidores internos
                     String comando;
                     if (body.startsWith("cadastrarItem")) {
                         comando = body;
@@ -267,17 +273,31 @@ public class Gateway {
                         logger.warn("Comando TCP inválido: " + body);
                         return;
                     }
+
                     logger.info("Chamando enviarParaServidorInternoTCP com o comando: " + comando);
 
-                    // Enviar a requisição formatada para os servidores internos TCP
-                    String respostaServidorInterno = gateway.enviarParaServidorInternoTCP(comando);
+                    try {
+                        // Call to send the request to the internal TCP server
+                        String respostaServidorInterno = gateway.enviarParaServidorInternoTCP(comando);
 
-                    // Log da resposta do servidor interno
-                    logger.info("Resposta do servidor interno TCP: " + respostaServidorInterno);
+                        // Log the response from the internal server
+                        logger.info("Resposta do servidor interno TCP: " + respostaServidorInterno);
 
-                    // Responder ao cliente
-                    out.write(respostaServidorInterno + "\n");
-                    out.flush();
+                        // Send response back to the client
+                        out.write(respostaServidorInterno + "\n");
+                        out.flush();
+                    } catch (IllegalStateException e) {
+                        // Handle case where no TCP server is available
+                        logger.error("Erro: " + e.getMessage());
+                        out.write("Erro: Nenhum servidor TCP disponível.\n");
+                        out.flush();
+                    } catch (IOException e) {
+                        // Handle communication errors with the internal server
+                        logger.error("Erro ao comunicar com o servidor TCP interno: " + e.getMessage(), e);
+                        out.write("Erro ao comunicar com o servidor interno TCP.\n");
+                        out.flush();
+                    }
+
                 } else {
                     logger.warn("Nenhum dado recebido via TCP.");
                 }
@@ -292,6 +312,7 @@ public class Gateway {
             }
         }
     }
+
 
     // Handler para requisições UDP
     static class GatewayUDPHandler implements Runnable {
@@ -311,11 +332,8 @@ public class Gateway {
                 String mensagem = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
                 logger.info("Recebido via UDP: " + mensagem);
 
-                // Montar o comando no formato correto para os servidores internos
                 String comando;
-                if (mensagem.startsWith("cadastrarItem")) {
-                    comando = mensagem;
-                } else if (mensagem.startsWith("registrarLance")) {
+                if (mensagem.startsWith("cadastrarItem") || mensagem.startsWith("registrarLance")) {
                     comando = mensagem;
                 } else {
                     byte[] respostaInvalida = "Comando inválido.".getBytes(StandardCharsets.UTF_8);
@@ -324,16 +342,21 @@ public class Gateway {
                     return;
                 }
 
-                // Enviar a requisição formatada para os servidores internos UDP
-                String respostaServidorInterno = gateway.enviarParaServidorInternoUDP(comando);
+                try {
+                    String respostaServidorInterno = gateway.enviarParaServidorInternoUDP(comando);
 
-                // Log da resposta do servidor interno
-                logger.info("Resposta do servidor interno UDP: " + respostaServidorInterno);
+                    byte[] buffer = respostaServidorInterno.getBytes(StandardCharsets.UTF_8);
+                    DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length, packet.getAddress(), packet.getPort());
+                    serverUDPSocket.send(responsePacket);
+                } catch (IllegalStateException | IOException e) {
+                    // Handle the case where no UDP server is available or communication fails
+                    String errorMessage = "Erro: Nenhum servidor UDP disponível.";
+                    byte[] responseBytes = errorMessage.getBytes(StandardCharsets.UTF_8);
+                    DatagramPacket responsePacket = new DatagramPacket(responseBytes, responseBytes.length, packet.getAddress(), packet.getPort());
+                    serverUDPSocket.send(responsePacket);
+                    logger.error(errorMessage);
+                }
 
-                // Responder ao cliente
-                byte[] buffer = respostaServidorInterno.getBytes(StandardCharsets.UTF_8);
-                DatagramPacket responsePacket = new DatagramPacket(buffer, buffer.length, packet.getAddress(), packet.getPort());
-                serverUDPSocket.send(responsePacket);
             } catch (IOException e) {
                 logger.error("Erro ao processar requisição UDP: " + e.getMessage(), e);
             }
@@ -341,9 +364,8 @@ public class Gateway {
     }
 
 
-
     // Enviar dados via HTTP para o servidor interno
-    private String enviarParaServidorInternoHTTP(int porta, String dados, String endpoint) {
+    private String enviarParaServidorInternoHTTP(int porta, String dados, String endpoint) throws IOException {
         HttpURLConnection conn = null;
         try {
             URL url = new URL("http://localhost:" + porta + endpoint);
@@ -357,7 +379,6 @@ public class Gateway {
                 os.write(input, 0, input.length);
             }
 
-            // Verificar o código de resposta do servidor interno
             int responseCode = conn.getResponseCode();
             if (responseCode != 200) {
                 throw new IOException("Falha ao se comunicar com o servidor HTTP interno. Código de resposta: " + responseCode);
@@ -367,8 +388,8 @@ public class Gateway {
             return new BufferedReader(new InputStreamReader(responseStream)).lines().collect(Collectors.joining("\n"));
 
         } catch (IOException e) {
-            e.printStackTrace();
-            return "Erro ao comunicar com o servidor HTTP interno: " + e.getMessage();
+            logger.error("Erro ao comunicar com o servidor HTTP interno: " + e.getMessage());
+            throw new IOException("Erro: Nenhum servidor HTTP disponível.");
         } finally {
             if (conn != null) {
                 conn.disconnect();
@@ -376,11 +397,11 @@ public class Gateway {
         }
     }
 
-
-    // Enviar dados via TCP para o servidor interno
+ // Enviar dados via TCP para o servidor interno
     private String enviarParaServidorInternoTCP(String dados) {
         int porta = getNextTCPHandlerPort();  // Certifique-se de que o TCPHandler está registrado corretamente
-        System.out.println("Enviando dados para o servidor TCP na porta: " + porta);
+        logger.info("Tentando enviar dados para o servidor TCP na porta: " + porta);
+        
         try (Socket socket = new Socket("localhost", porta)) {
             socket.setSoTimeout(5000);  // Adiciona um timeout de 5 segundos
 
@@ -388,42 +409,63 @@ public class Gateway {
             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
 
             out.println(dados);  // Enviar os dados para o servidor TCP
-            System.out.println("Dados enviados: " + dados);  // Log para mostrar o que foi enviado
+            logger.info("Dados enviados para o servidor TCP na porta " + porta + ": " + dados);
 
             String resposta = in.readLine();  // Ler a resposta do servidor TCP
             if (resposta == null) {
-                System.out.println("Nenhuma resposta recebida do servidor TCP.");
+                logger.warn("Nenhuma resposta recebida do servidor TCP na porta: " + porta);
+                return "Erro: Nenhuma resposta do servidor interno TCP.";
             } else {
-                System.out.println("Resposta recebida do servidor TCP: " + resposta);  // Log para ver se a resposta foi recebida
+                logger.info("Resposta recebida do servidor TCP: " + resposta);
+                return resposta;
             }
-            return resposta;
 
         } catch (IOException e) {
-            e.printStackTrace();
-            return "Erro ao comunicar com o servidor TCP interno.";
+            // Se falhar ao conectar ao servidor, remover a porta da lista
+            logger.error("Erro ao comunicar com o servidor TCP na porta: " + porta + " - " + e.getMessage());
+            removerPortaInativa(porta);  // Chama o método para remover a porta
+            return "Erro: Nenhum servidor TCP disponível.";
         }
     }
+
+    // Método para remover a porta TCP inativa da lista de servidores
+    private synchronized void removerPortaInativa(int porta) {
+        logger.info("Removendo porta inativa: " + porta);
+        tcpHandlerPorts.remove(Integer.valueOf(porta));  // Remove a porta da lista
+        logger.info("Porta removida: " + porta);
+    }
+
+
 
 
 
     // Enviar dados via UDP para o servidor interno
-    private String enviarParaServidorInternoUDP(String dados) {
-        int porta = getNextUDPHandlerPort();
+    private String enviarParaServidorInternoUDP(String dados) throws IOException {
+        int porta;
+        try {
+            porta = getNextUDPHandlerPort();
+        } catch (IllegalStateException e) {
+            throw new IllegalStateException("Nenhum servidor UDP disponível.");
+        }
+
         try (DatagramSocket socket = new DatagramSocket()) {
             byte[] buffer = dados.getBytes(StandardCharsets.UTF_8);
             InetAddress address = InetAddress.getByName("localhost");
-            DatagramPacket packet = new DatagramPacket(buffer, buffer.length, address, 9091);
+            DatagramPacket packet = new DatagramPacket(buffer, buffer.length, address, porta);
             socket.send(packet);
 
-            // Receber resposta do servidor interno
             byte[] responseBuffer = new byte[1024];
             DatagramPacket responsePacket = new DatagramPacket(responseBuffer, responseBuffer.length);
-            socket.receive(responsePacket);
+            socket.setSoTimeout(5000);  // Set a timeout for receiving the response
+
+            socket.receive(responsePacket);  // Receive the response
             return new String(responsePacket.getData(), 0, responsePacket.getLength(), StandardCharsets.UTF_8);
 
         } catch (IOException e) {
-            e.printStackTrace();
-            return "Erro ao comunicar com o servidor UDP interno.";
+            logger.error("Erro ao comunicar com o servidor UDP interno: " + e.getMessage());
+            throw new IOException("Erro: Nenhum servidor UDP disponível.");
         }
     }
+
+
 }
