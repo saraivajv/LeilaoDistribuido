@@ -1,212 +1,152 @@
 package protocol;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import database.BancoDados;
-import paxos.PaxosAcceptor;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpExchange;
 
 import java.io.*;
-import java.net.InetSocketAddress;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.stream.Collectors;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-public class HTTPHandler implements Runnable {
-    private static final Logger logger = LoggerFactory.getLogger(HTTPHandler.class);
-    private int porta;
-    private AtomicBoolean running = new AtomicBoolean(false);
-    private HttpServer serverHTTP;
-    private ExecutorService executorService;
-    private int promisedProposal = -1;  // Armazena a maior proposta prometida
-    private int acceptedProposal = -1;  // Armazena a maior proposta aceita
-    private String acceptedValue = null;  // Armazena o valor da proposta aceita
-    private final PaxosAcceptor paxosAcceptor;
+public class HTTPHandler {
 
-    // Envia um Prepare e retorna se pode prometer aceitar propostas maiores
-    public boolean sendPrepare(int proposalNumber) {
-        if (proposalNumber > promisedProposal) {
-            promisedProposal = proposalNumber;
-            return true;  // Promete não aceitar propostas menores
-        }
-        return false;  // Rejeita a proposta
-    }
+    private static BancoDados bancoDados;
 
-    // Envia um Accept e retorna se aceita a proposta
-    public boolean sendAccept(int proposalNumber, String value) {
-        if (proposalNumber >= promisedProposal) {
-            acceptedProposal = proposalNumber;
-            acceptedValue = value;
-            return true;  // Aceita a proposta
-        }
-        return false;  // Rejeita a proposta
-    }
+    public static void main(String[] args) {
+        int porta = Integer.parseInt(args[0]);
 
-    public String getAcceptedValue() {
-        return acceptedValue;
-    }
+        // Inicializar o banco de dados
+        bancoDados = BancoDados.getInstance();
 
-    public HTTPHandler(int porta) {
-        this.porta = porta;
-        this.paxosAcceptor = new PaxosAcceptor();
-    }
-
-    public int getPorta() {
-        return porta;
-    }
-
-    public boolean isRunning() {
-        return running.get();
-    }
-
-    public void iniciar() {
-        if (running.get()) {
-            logger.warn("Servidor HTTP já está rodando na porta {}", porta);
-            return;
-        }
         try {
-            serverHTTP = HttpServer.create(new InetSocketAddress(porta), 0);
-            serverHTTP.createContext("/cadastrarItem", new CadastrarItemHandler());
-            serverHTTP.createContext("/registrarLance", new RegistrarLanceHandler());
-            executorService = Executors.newFixedThreadPool(10);
-            serverHTTP.setExecutor(executorService);
-            serverHTTP.start();
-            running.set(true);
-            logger.info("Servidor HTTP iniciado na porta {}", porta);
+            HttpServer server = HttpServer.create(new InetSocketAddress(porta), 0);
+            server.createContext("/cadastrarItem", new CadastrarItemHandler());
+            server.createContext("/registrarLance", new RegistrarLanceHandler());
+            server.setExecutor(null); // Cria um executor padrão
+            server.start();
+            System.out.println("Servidor HTTP rodando na porta " + porta);
+
+            // Registrar o servidor no Gateway
+            registrarNoGateway("http", porta);
+
         } catch (IOException e) {
-            logger.error("Erro ao iniciar o servidor HTTP na porta {}: {}", porta, e.getMessage(), e);
+            e.printStackTrace();
         }
     }
 
-    public void parar() {
-        if (!running.get()) {
-            logger.warn("Servidor HTTP não está rodando na porta {}", porta);
-            return;
+    private static void registrarNoGateway(String tipo, int porta) {
+        try {
+            URL url = new URL("http://localhost:9000/registerServer");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "text/plain; charset=UTF-8");
+
+            String corpo = tipo + ";" + porta;
+            try (OutputStream os = conn.getOutputStream()) {
+                byte[] input = corpo.getBytes(StandardCharsets.UTF_8);
+                os.write(input, 0, input.length);
+            }
+
+            int responseCode = conn.getResponseCode();
+            System.out.println("Registrado no Gateway com status: " + responseCode);
+
+        } catch (IOException e) {
+            e.printStackTrace();
         }
-        serverHTTP.stop(0);
-        executorService.shutdown();
-        running.set(false);
-        logger.info("Servidor HTTP parado na porta {}", porta);
     }
 
-    @Override
-    public void run() {
-        iniciar();
-    }
-
-    /**
-     * Handler para processar requisições de cadastro de item via HTTP.
-     */
     static class CadastrarItemHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                responder(exchange, 405, "Método não permitido.");
-                return;
-            }
-
-            // Ler o corpo da requisição
-            InputStream is = exchange.getRequestBody();
-            String corpo = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))
-                    .lines()
-                    .collect(Collectors.joining("\n"));
-
-            // Supondo que o corpo esteja no formato: nome;descricao;precoInicial
-            String[] partes = corpo.split(";");
-            if (partes.length != 3) {
-                responder(exchange, 400, "Formato inválido. Use: nome;descricao;precoInicial");
-                return;
-            }
-
-            String nome = partes[0];
-            String descricao = partes[1];
-            double precoInicial;
             try {
-                precoInicial = Double.parseDouble(partes[2]);
-            } catch (NumberFormatException e) {
-                responder(exchange, 400, "Preço inicial inválido.");
-                return;
-            }
+                InputStream is = exchange.getRequestBody();
+                BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
+                String body = reader.readLine();
+                
+                // Verificar os dados recebidos
+                System.out.println("Dados recebidos: " + body);
 
-            // Processar a requisição via BancoDados
-            BancoDados db = BancoDados.getInstance();
-            int id = db.adicionarItem(nome, descricao, precoInicial);
-            String resposta;
-            if (id != -1) {
-                resposta = "Item cadastrado com ID: " + id;
-                responder(exchange, 200, resposta);
-            } else {
-                resposta = "Erro ao cadastrar item.";
-                responder(exchange, 500, resposta);
+                // Verifique se a string contém ao menos 3 partes
+                String[] partes = body.split(";");
+                if (partes.length != 3) {
+                    throw new IllegalArgumentException("Dados inválidos. Esperado formato: nome;descricao;preco");
+                }
+
+                String nome = partes[0];
+                String descricao = partes[1];
+                double precoInicial;
+                
+                try {
+                    precoInicial = Double.parseDouble(partes[2]);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("O preço inicial deve ser um número.");
+                }
+
+                // Chamar o banco de dados para cadastrar o item
+                int idItem = bancoDados.adicionarItem(nome, descricao, precoInicial);
+
+                String resposta;
+                if (idItem != -1) {
+                    resposta = "Item cadastrado com sucesso. ID: " + idItem;
+                } else {
+                    throw new RuntimeException("Erro ao cadastrar o item no banco de dados.");
+                }
+
+                // Enviar a resposta de volta ao cliente via Gateway
+                exchange.sendResponseHeaders(200, resposta.getBytes().length);
+                OutputStream os = exchange.getResponseBody();
+                os.write(resposta.getBytes());
+                os.close();
+
+            } catch (Exception e) {
+                // Logar a exceção para entender o que está acontecendo
+                e.printStackTrace();
+                System.out.println("Erro no processamento do item: " + e.getMessage());
+                
+                exchange.sendResponseHeaders(500, 0);
+                OutputStream os = exchange.getResponseBody();
+                os.write("Erro interno do servidor".getBytes(StandardCharsets.UTF_8));
+                os.close();
             }
         }
     }
 
-    /**
-     * Handler para processar requisições de registro de lance via HTTP.
-     */
+
+
     static class RegistrarLanceHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
-                responder(exchange, 405, "Método não permitido.");
-                return;
-            }
-
-            // Ler o corpo da requisição
             InputStream is = exchange.getRequestBody();
-            String corpo = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))
-                    .lines()
-                    .collect(Collectors.joining("\n"));
+            BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
+            String body = reader.readLine();
 
-            // Supondo que o corpo esteja no formato: idItem;clienteNome;valor
-            String[] partes = corpo.split(";");
-            if (partes.length != 3) {
-                responder(exchange, 400, "Formato inválido. Use: idItem;clienteNome;valor");
-                return;
-            }
-
-            int idItem;
+            // Supondo que os dados vêm no formato idItem;clienteNome;valor
+            String[] partes = body.split(";");
+            int idItem = Integer.parseInt(partes[0]);
             String clienteNome = partes[1];
-            double valor;
-            try {
-                idItem = Integer.parseInt(partes[0]);
-                valor = Double.parseDouble(partes[2]);
-            } catch (NumberFormatException e) {
-                responder(exchange, 400, "ID do item ou valor inválido.");
-                return;
-            }
+            double valor = Double.parseDouble(partes[2]);
 
-            // Processar a requisição via BancoDados
-            BancoDados db = BancoDados.getInstance();
-            boolean sucesso = db.registrarLance(idItem, clienteNome, valor);
+            // Chamar o banco de dados para registrar o lance
+            boolean sucesso = bancoDados.registrarLance(idItem, clienteNome, valor);
+
             String resposta;
             if (sucesso) {
                 resposta = "Lance registrado com sucesso.";
-                responder(exchange, 200, resposta);
             } else {
-                resposta = "Lance inferior ao maior lance atual.";
-                responder(exchange, 400, resposta);
+                resposta = "Erro ao registrar o lance.";
             }
-        }
-    }
 
-    /**
-     * Método auxiliar para enviar respostas HTTP.
-     */
-    private static void responder(HttpExchange exchange, int codigoStatus, String resposta) throws IOException {
-        byte[] bytes = resposta.getBytes(StandardCharsets.UTF_8);
-        exchange.sendResponseHeaders(codigoStatus, bytes.length);
-        OutputStream os = exchange.getResponseBody();
-        os.write(bytes);
-        os.close();
+            // Enviar a resposta de volta ao cliente via Gateway
+            exchange.sendResponseHeaders(200, resposta.getBytes().length);
+            OutputStream os = exchange.getResponseBody();
+            os.write(resposta.getBytes());
+            os.close();
+        }
     }
 }
