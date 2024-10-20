@@ -1,9 +1,6 @@
 C:\Users\joaov\git\leilaodistribuida\LeilaoDistribuida\src\main\java\models\ItemLeilao.java
-C:\Users\joaov\git\leilaodistribuida\LeilaoDistribuida\src\main\java\paxos\PaxosAcceptor.java
-C:\Users\joaov\git\leilaodistribuida\LeilaoDistribuida\src\main\java\paxos\PaxosMessage.java
 C:\Users\joaov\git\leilaodistribuida\LeilaoDistribuida\src\main\java\protocol\HTTPHandler.java
 C:\Users\joaov\git\leilaodistribuida\LeilaoDistribuida\src\main\java\protocol\UDPHandler.java
-C:\Users\joaov\git\leilaodistribuida\LeilaoDistribuida\src\main\java\paxos\PaxosProposer.java
 C:\Users\joaov\git\leilaodistribuida\LeilaoDistribuida\src\main\java\gateway\Gateway.java
 C:\Users\joaov\git\leilaodistribuida\LeilaoDistribuida\src\main\java\models\Lance.java
 C:\Users\joaov\git\leilaodistribuida\LeilaoDistribuida\src\main\java\protocol\TCPHandler.java

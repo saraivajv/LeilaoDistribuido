@@ -2,13 +2,11 @@ models\ItemLeilao.class
 protocol\HTTPHandler.class
 protocol\TCPHandler$ClienteTCPHandler.class
 database\BancoDados.class
-paxos\PaxosProposer.class
 protocol\UDPHandler.class
 gateway\Gateway$GatewayTCPHandler.class
 gateway\Gateway.class
-paxos\PaxosMessage.class
-paxos\PaxosAcceptor.class
 models\Lance.class
+gateway\Gateway$ServidoresHTTPHandler.class
 protocol\TCPHandler.class
 gateway\Gateway$GatewayHttpHandler.class
 protocol\HTTPHandler$RegistrarLanceHandler.class

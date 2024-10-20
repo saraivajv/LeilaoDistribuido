@@ -61,6 +61,7 @@ public class Gateway {
             serverHTTP.createContext("/cadastrarItem", new GatewayHttpHandler(this));
             serverHTTP.createContext("/registrarLance", new GatewayHttpHandler(this));
             serverHTTP.createContext("/registerServer", new RegisterServerHandler(this)); // NOVO CONTEXTO DE REGISTRO
+            serverHTTP.createContext("/servidoresHTTPAtivos", new ServidoresHTTPHandler(this));
             serverHTTP.setExecutor(executorServiceHTTP);
             serverHTTP.start();
             logger.info("Gateway HTTP iniciado na porta {}", PORTA_GATEWAY_HTTP);
@@ -135,6 +136,19 @@ public class Gateway {
         roundRobinUDP = (roundRobinUDP + 1) % udpHandlerPorts.size();
         return port;
     }
+    
+ // Método para remover servidores inativos (HTTP, TCP ou UDP)
+    public synchronized void removerServidor(String tipo, int porta) {
+        logger.info("Removendo servidor " + tipo.toUpperCase() + " na porta: " + porta);
+        if (tipo.equals("http")) {
+            httpHandlerPorts.remove(Integer.valueOf(porta));
+        } else if (tipo.equals("tcp")) {
+            tcpHandlerPorts.remove(Integer.valueOf(porta));
+        } else if (tipo.equals("udp")) {
+            udpHandlerPorts.remove(Integer.valueOf(porta));
+        }
+        logger.info("Servidor removido com sucesso.");
+    }
 
     // Novo handler para registrar servidores dinamicamente
     static class RegisterServerHandler implements HttpHandler {
@@ -188,6 +202,35 @@ public class Gateway {
             }
         }
     }
+    
+    // Handler para responder com a lista de servidores HTTP ativos
+    static class ServidoresHTTPHandler implements HttpHandler {
+        private final Gateway gateway;
+
+        public ServidoresHTTPHandler(Gateway gateway) {
+            this.gateway = gateway;
+        }
+
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                List<Integer> httpPorts = gateway.getHttpHandlerPorts();
+                String resposta = httpPorts.stream()
+                    .map(port -> "http://localhost:" + port)
+                    .collect(Collectors.joining(";"));
+
+                exchange.sendResponseHeaders(200, resposta.getBytes().length);
+                OutputStream os = exchange.getResponseBody();
+                os.write(resposta.getBytes());
+                os.close();
+            } else {
+                exchange.sendResponseHeaders(405, "Método não permitido".getBytes().length);
+                OutputStream os = exchange.getResponseBody();
+                os.write("Método não permitido".getBytes());
+                os.close();
+            }
+        }
+    }
 
     // Classe responsável por lidar com requisições HTTP no Gateway e redirecioná-las para servidores internos HTTP
     static class GatewayHttpHandler implements HttpHandler {
@@ -212,6 +255,7 @@ public class Gateway {
 
                 try {
                     if ("/cadastrarItem".equalsIgnoreCase(caminho) || "/registrarLance".equalsIgnoreCase(caminho)) {
+                        // O comando pode conter um batch de requisições agrupadas
                         String respostaServidorInterno = gateway.enviarParaServidorInternoHTTP(gateway.getNextHTTPHandlerPort(), comando, caminho);
 
                         exchange.sendResponseHeaders(200, respostaServidorInterno.getBytes().length);
@@ -238,6 +282,7 @@ public class Gateway {
                 os.close();
             }
         }
+
     }
 
 
