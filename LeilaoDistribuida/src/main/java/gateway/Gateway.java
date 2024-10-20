@@ -112,30 +112,152 @@ public class Gateway {
         if (httpHandlerPorts.isEmpty()) {
             throw new IllegalStateException("Nenhum servidor HTTP disponível.");
         }
-        int port = httpHandlerPorts.get(roundRobinHTTP);
-        roundRobinHTTP = (roundRobinHTTP + 1) % httpHandlerPorts.size();
-        return port;
+
+        int initialIndex = roundRobinHTTP;
+        int port;
+
+        do {
+            port = httpHandlerPorts.get(roundRobinHTTP);
+
+            // Verificar se o servidor está ativo fazendo uma requisição de teste (por exemplo, uma requisição HEAD)
+            try {
+                URL url = new URL("http://localhost:" + port + "/healthcheck");  // Criar um endpoint de verificação de saúde (healthcheck) no servidor HTTP
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("HEAD");
+                conn.setConnectTimeout(500);  // Timeout de 500ms
+                conn.setReadTimeout(500);
+                int responseCode = conn.getResponseCode();
+
+                if (responseCode == 200) {
+                    // Se o servidor estiver ativo, usar a porta
+                    roundRobinHTTP = (roundRobinHTTP + 1) % httpHandlerPorts.size();
+                    return port;
+                } else {
+                    // Se o servidor retornar um código de erro, tratá-lo como inativo
+                    logger.warn("Servidor HTTP na porta " + port + " retornou código de resposta: " + responseCode + ". Removendo da lista.");
+                }
+
+            } catch (IOException e) {
+                // Se o servidor não responder, removê-lo da lista
+                logger.error("Servidor HTTP na porta " + port + " está inativo. Removendo da lista.");
+                httpHandlerPorts.remove(Integer.valueOf(port));
+            }
+
+            // Atualizar o Round-Robin para o próximo servidor
+            roundRobinHTTP = (roundRobinHTTP + 1) % httpHandlerPorts.size();
+
+        } while (roundRobinHTTP != initialIndex && !httpHandlerPorts.isEmpty());
+
+        // Se não restarem servidores ativos, lançar exceção
+        if (httpHandlerPorts.isEmpty()) {
+            throw new IllegalStateException("Nenhum servidor HTTP disponível.");
+        }
+
+        return getNextHTTPHandlerPort();  // Tentar novamente com os servidores ativos
     }
+
 
     // Roteamento via TCP
     public synchronized int getNextTCPHandlerPort() {
         if (tcpHandlerPorts.isEmpty()) {
             throw new IllegalStateException("Nenhum servidor TCP disponível.");
         }
-        int port = tcpHandlerPorts.get(roundRobinTCP);
-        roundRobinTCP = (roundRobinTCP + 1) % tcpHandlerPorts.size();
-        return port;
+
+        int initialIndex = roundRobinTCP;
+        int port;
+
+        do {
+            port = tcpHandlerPorts.get(roundRobinTCP);
+
+            // Verificar se o servidor TCP está ativo
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress("localhost", port), 500);  // Tentar se conectar com timeout de 500ms
+                socket.setSoTimeout(500);  // Definir timeout de leitura para 500ms
+                
+                // Se a conexão foi bem-sucedida, retornar a porta
+                roundRobinTCP = (roundRobinTCP + 1) % tcpHandlerPorts.size();
+                return port;
+
+            } catch (IOException e) {
+                // Se falhar, remover o servidor da lista e tentar o próximo
+                logger.error("Servidor TCP na porta " + port + " está inativo. Removendo da lista.");
+                tcpHandlerPorts.remove(Integer.valueOf(port));
+            }
+
+            // Atualizar o Round-Robin para o próximo servidor
+            roundRobinTCP = (roundRobinTCP + 1) % tcpHandlerPorts.size();
+
+        } while (roundRobinTCP != initialIndex && !tcpHandlerPorts.isEmpty());
+
+        // Se não restarem servidores ativos, lançar exceção
+        if (tcpHandlerPorts.isEmpty()) {
+            throw new IllegalStateException("Nenhum servidor TCP disponível.");
+        }
+
+        return getNextTCPHandlerPort();  // Tentar novamente com os servidores ativos
     }
 
-    // Roteamento via UDP
+
+    // Roteamento via UDP no Gateway com fallback
     public synchronized int getNextUDPHandlerPort() {
         if (udpHandlerPorts.isEmpty()) {
             throw new IllegalStateException("Nenhum servidor UDP disponível.");
         }
-        int port = udpHandlerPorts.get(roundRobinUDP);
-        roundRobinUDP = (roundRobinUDP + 1) % udpHandlerPorts.size();
-        return port;
+
+        int initialIndex = roundRobinUDP;
+        int port;
+
+        do {
+            port = udpHandlerPorts.get(roundRobinUDP);
+
+            // Verificar se o servidor está ativo com um ping e espera de resposta
+            try (DatagramSocket socket = new DatagramSocket()) {
+                InetAddress address = InetAddress.getByName("localhost");
+                byte[] buffer = "ping".getBytes(StandardCharsets.UTF_8);
+                DatagramPacket packet = new DatagramPacket(buffer, buffer.length, address, port);
+                socket.send(packet);
+
+                // Preparar para receber a resposta
+                byte[] responseBuffer = new byte[1024];
+                DatagramPacket responsePacket = new DatagramPacket(responseBuffer, responseBuffer.length);
+                socket.setSoTimeout(2000);  // Timeout de 2 segundos para esperar a resposta
+
+                // Tentar receber a resposta do servidor UDP
+                socket.receive(responsePacket);
+
+                // Se a resposta for recebida, significa que o servidor está ativo
+                String response = new String(responsePacket.getData(), 0, responsePacket.getLength(), StandardCharsets.UTF_8);
+                if ("Pong".equalsIgnoreCase(response.trim())) {
+                    // Se o servidor responder com "Pong", ele está ativo
+                    roundRobinUDP = (roundRobinUDP + 1) % udpHandlerPorts.size();
+                    return port;
+                } else {
+                    // Resposta inesperada
+                    logger.warn("Resposta inesperada do servidor UDP na porta " + port + ": " + response);
+                }
+
+            } catch (IOException e) {
+                // Se o servidor não responder ou der timeout, remover da lista
+                logger.error("Servidor UDP na porta " + port + " está inativo. Removendo da lista.");
+                udpHandlerPorts.remove(Integer.valueOf(port));
+            }
+
+            // Atualizar o Round-Robin para o próximo servidor
+            roundRobinUDP = (roundRobinUDP + 1) % udpHandlerPorts.size();
+
+        } while (roundRobinUDP != initialIndex && !udpHandlerPorts.isEmpty());
+
+        // Se nenhum servidor ativo restar, lançar exceção
+        if (udpHandlerPorts.isEmpty()) {
+            throw new IllegalStateException("Nenhum servidor UDP disponível.");
+        }
+
+        return getNextUDPHandlerPort();  // Tentar novamente com os servidores ativos
     }
+
+
+
+
     
  // Método para remover servidores inativos (HTTP, TCP ou UDP)
     public synchronized void removerServidor(String tipo, int porta) {

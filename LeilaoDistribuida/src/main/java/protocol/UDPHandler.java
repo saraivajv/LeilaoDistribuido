@@ -51,24 +51,30 @@ public class UDPHandler {
                 
                 logger.info("Recebido via UDP: " + mensagem);
 
-                // Adicionar a requisição na fila do batch
-                synchronized (requestBatch) {
-                    requestBatch.add(mensagem);
-                    logger.info("Requisição adicionada ao batch. Tamanho atual do batch: " + requestBatch.size());
-
-                    // Verifica se o batch atingiu o tamanho máximo para processar imediatamente
-                    if (requestBatch.size() >= BATCH_SIZE) {
-                        logger.info("Tamanho máximo do batch atingido. Processando batch...");
-                        processarBatch();
-                    }
+                // Se for um "ping", não adicionar ao batch, apenas registrar a resposta
+                if ("ping".equals(mensagem)) {
+                    logger.info("Recebida mensagem de 'ping'. Ignorando para o processamento de batch.");
+                    byte[] responseBytes = "Pong".getBytes(StandardCharsets.UTF_8);
+                    DatagramPacket response = new DatagramPacket(responseBytes, responseBytes.length, request.getAddress(), request.getPort());
+                    socket.send(response);  // Responder ao cliente JMeter
+                    continue;
                 }
 
-                // Resposta imediata para o cliente informando que a requisição foi recebida
-                String respostaRecebida = "Requisição recebida e será processada em batch.";
-                byte[] responseBytes = respostaRecebida.getBytes(StandardCharsets.UTF_8);
+                // Adiciona a requisição ao batch
+                synchronized (requestBatch) {
+                    requestBatch.add(mensagem);
+                    logger.info("Requisição adicionada ao batch. Tamanho atual: " + requestBatch.size());
+                }
+
+                // Envia uma resposta imediatamente ao JMeter, mesmo antes do processamento do batch
+                byte[] responseBytes = "Requisição recebida. Será processada no próximo batch.".getBytes(StandardCharsets.UTF_8);
                 DatagramPacket response = new DatagramPacket(responseBytes, responseBytes.length, request.getAddress(), request.getPort());
-                socket.send(response);
-                logger.info("Resposta enviada para o cliente.");
+                socket.send(response);  // Responder ao cliente JMeter
+
+                // Se o batch atingir o tamanho máximo, processar imediatamente
+                if (requestBatch.size() >= BATCH_SIZE) {
+                    processarBatch();
+                }
             }
 
         } catch (IOException e) {
@@ -77,7 +83,7 @@ public class UDPHandler {
 
     }
 
-    // Método para processar um batch de requisições
+ // Método para processar um batch de requisições
     private static void processarBatch() {
         synchronized (requestBatch) {
             if (requestBatch.isEmpty()) {

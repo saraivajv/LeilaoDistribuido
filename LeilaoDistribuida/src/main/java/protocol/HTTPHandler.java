@@ -37,6 +37,7 @@ public class HTTPHandler {
             HttpServer server = HttpServer.create(new InetSocketAddress(porta), 0);
             server.createContext("/cadastrarItem", new CadastrarItemHandler());
             server.createContext("/registrarLance", new RegistrarLanceHandler());
+            server.createContext("/healthcheck", new HealthCheckHandler());  // Adiciona o contexto de healthcheck
             server.setExecutor(null); // Cria um executor padrão
             server.start();
             System.out.println("Servidor HTTP rodando na porta " + porta);
@@ -49,6 +50,16 @@ public class HTTPHandler {
 
         } catch (IOException e) {
             e.printStackTrace();
+        }
+    }
+    
+    // Novo handler para o healthcheck
+    static class HealthCheckHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            // Responder com status 200 OK
+            exchange.sendResponseHeaders(200, -1);  // -1 significa que não há corpo de resposta
+            exchange.close();
         }
     }
 
@@ -83,21 +94,11 @@ public class HTTPHandler {
                 BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
                 String body = reader.readLine();
 
-                logger.info("Dados recebidos: " + body);
+                logger.info("Dados recebidos (cadastrarItem): " + body);
 
-                String[] partes = body.split(";");
-                if (partes.length != 3) {
-                    throw new IllegalArgumentException("Dados inválidos. Esperado formato: nome;descricao;preco");
-                }
-
-                String nome = partes[0];
-                String descricao = partes[1];
-                double precoInicial = Double.parseDouble(partes[2]);
-
-                // Adiciona a requisição ao batch
                 synchronized (requestBatch) {
-                    requestBatch.add(body);
-                    logger.info("Requisição adicionada ao batch. Tamanho atual: " + requestBatch.size());
+                    requestBatch.add("cadastrarItem;" + body); // Adiciona um identificador para o tipo de requisição
+                    logger.info("Requisição de cadastrarItem adicionada ao batch. Tamanho atual: " + requestBatch.size());
                 }
 
                 String resposta = "Requisição recebida e adicionada ao batch.";
@@ -113,6 +114,43 @@ public class HTTPHandler {
 
             } catch (Exception e) {
                 logger.error("Erro no processamento do item: " + e.getMessage(), e);
+                exchange.sendResponseHeaders(500, 0);
+                OutputStream os = exchange.getResponseBody();
+                os.write("Erro interno do servidor".getBytes(StandardCharsets.UTF_8));
+                os.close();
+            }
+        }
+    }
+
+    // Handler para a rota /registrarLance
+    static class RegistrarLanceHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            try {
+                InputStream is = exchange.getRequestBody();
+                BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
+                String body = reader.readLine();
+
+                logger.info("Dados recebidos (registrarLance): " + body);
+
+                synchronized (requestBatch) {
+                    requestBatch.add("registrarLance;" + body); // Adiciona um identificador para o tipo de requisição
+                    logger.info("Requisição de registrarLance adicionada ao batch. Tamanho atual: " + requestBatch.size());
+                }
+
+                String resposta = "Requisição de lance recebida e adicionada ao batch.";
+                exchange.sendResponseHeaders(200, resposta.getBytes().length);
+                OutputStream os = exchange.getResponseBody();
+                os.write(resposta.getBytes());
+                os.close();
+
+                // Se o batch atingir o tamanho máximo, processar imediatamente
+                if (requestBatch.size() >= BATCH_SIZE) {
+                    processarBatch();
+                }
+
+            } catch (Exception e) {
+                logger.error("Erro no processamento do lance: " + e.getMessage(), e);
                 exchange.sendResponseHeaders(500, 0);
                 OutputStream os = exchange.getResponseBody();
                 os.write("Erro interno do servidor".getBytes(StandardCharsets.UTF_8));
@@ -140,39 +178,41 @@ public class HTTPHandler {
 
         for (String request : batchParaProcessar) {
             try {
-                String[] partes = request.split(";");
-                String nome = partes[0];
-                String descricao = partes[1];
-                double precoInicial = Double.parseDouble(partes[2]);
+                String[] partes = request.split(";", 2); // Tipo da requisição e dados separados
+                String tipoRequisicao = partes[0];
+                String dadosRequisicao = partes[1];
 
-                // Chama o banco de dados para cadastrar o item
-                int idItem = bancoDados.adicionarItem(nome, descricao, precoInicial);
+                if ("cadastrarItem".equals(tipoRequisicao)) {
+                    String[] dados = dadosRequisicao.split(";");
+                    String nome = dados[0];
+                    String descricao = dados[1];
+                    double precoInicial = Double.parseDouble(dados[2]);
 
-                if (idItem != -1) {
-                    logger.info("Item cadastrado com sucesso: " + nome + " (ID: " + idItem + ")");
-                } else {
-                    logger.error("Erro ao cadastrar o item: " + nome);
+                    // Chama o banco de dados para cadastrar o item
+                    int idItem = bancoDados.adicionarItem(nome, descricao, precoInicial);
+                    if (idItem != -1) {
+                        logger.info("Item cadastrado com sucesso: " + nome + " (ID: " + idItem + ")");
+                    } else {
+                        logger.error("Erro ao cadastrar o item: " + nome);
+                    }
+                } else if ("registrarLance".equals(tipoRequisicao)) {
+                    String[] dados = dadosRequisicao.split(";");
+                    int idItem = Integer.parseInt(dados[0]);
+                    String cliente = dados[1];
+                    double valor = Double.parseDouble(dados[2]);
+
+                    // Chama o banco de dados para registrar o lance
+                    boolean sucesso = bancoDados.registrarLance(idItem, cliente, valor);
+                    if (sucesso) {
+                        logger.info("Lance registrado com sucesso para o item " + idItem);
+                    } else {
+                        logger.error("Erro ao registrar lance para o item " + idItem);
+                    }
                 }
 
             } catch (Exception e) {
                 logger.error("Erro ao processar requisição do batch: " + e.getMessage(), e);
             }
-        }
-    }
-
-    static class RegistrarLanceHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            InputStream is = exchange.getRequestBody();
-            BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
-            String body = reader.readLine();
-
-            // Implementação de lógica de lance (não relacionada ao Request Batch)
-            String resposta = "Lance recebido.";
-            exchange.sendResponseHeaders(200, resposta.getBytes().length);
-            OutputStream os = exchange.getResponseBody();
-            os.write(resposta.getBytes());
-            os.close();
         }
     }
 

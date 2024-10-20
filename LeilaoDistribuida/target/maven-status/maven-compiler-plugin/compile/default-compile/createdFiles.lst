@@ -5,6 +5,7 @@ database\BancoDados.class
 protocol\UDPHandler.class
 gateway\Gateway$GatewayTCPHandler.class
 gateway\Gateway.class
+protocol\HTTPHandler$HealthCheckHandler.class
 models\Lance.class
 gateway\Gateway$ServidoresHTTPHandler.class
 protocol\TCPHandler.class
