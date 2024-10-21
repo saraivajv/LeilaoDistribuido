@@ -3,14 +3,15 @@ protocol\HTTPHandler.class
 protocol\TCPHandler$ClienteTCPHandler.class
 database\BancoDados.class
 protocol\UDPHandler.class
+gateway\HeartBeat.class
 gateway\Gateway$GatewayTCPHandler.class
 gateway\Gateway.class
-protocol\HTTPHandler$HealthCheckHandler.class
 models\Lance.class
 gateway\Gateway$ServidoresHTTPHandler.class
 protocol\TCPHandler.class
 gateway\Gateway$GatewayHttpHandler.class
 protocol\HTTPHandler$RegistrarLanceHandler.class
+protocol\HTTPHandler$HeartbeatHandler.class
 gateway\Gateway$GatewayUDPHandler.class
 gateway\Gateway$RegisterServerHandler.class
 protocol\HTTPHandler$CadastrarItemHandler.class

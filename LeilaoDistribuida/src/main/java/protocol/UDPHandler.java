@@ -40,23 +40,23 @@ public class UDPHandler {
 
         try (DatagramSocket socket = new DatagramSocket(porta)) {
             logger.info("Servidor UDP rodando na porta " + porta);
-            
+
             registrarNoGateway("udp", porta);  // Registrar o servidor no gateway
-            
+
             byte[] buffer = new byte[1024];
             while (true) {
                 DatagramPacket request = new DatagramPacket(buffer, buffer.length);
                 socket.receive(request);
                 String mensagem = new String(request.getData(), 0, request.getLength(), StandardCharsets.UTF_8);
-                
+
                 logger.info("Recebido via UDP: " + mensagem);
 
-                // Se for um "ping", não adicionar ao batch, apenas registrar a resposta
+                // Se for um "ping", responder com "pong" (para healthcheck)
                 if ("ping".equals(mensagem)) {
-                    logger.info("Recebida mensagem de 'ping'. Ignorando para o processamento de batch.");
+                    logger.info("Recebida mensagem de 'ping'. Respondendo com 'Pong'.");
                     byte[] responseBytes = "Pong".getBytes(StandardCharsets.UTF_8);
                     DatagramPacket response = new DatagramPacket(responseBytes, responseBytes.length, request.getAddress(), request.getPort());
-                    socket.send(response);  // Responder ao cliente JMeter
+                    socket.send(response);  // Responder ao cliente Gateway
                     continue;
                 }
 
@@ -83,7 +83,7 @@ public class UDPHandler {
 
     }
 
- // Método para processar um batch de requisições
+    // Método para processar um batch de requisições
     private static void processarBatch() {
         synchronized (requestBatch) {
             if (requestBatch.isEmpty()) {
@@ -151,7 +151,7 @@ public class UDPHandler {
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
-            conn.setRequestProperty("Content-Type", "text/plain; charset=UTF-8");
+            conn.setRequestProperty("Content-Type", "text/plain; charset=UTF_8");
 
             String corpo = tipo + ";" + porta;
             try (OutputStream os = conn.getOutputStream()) {

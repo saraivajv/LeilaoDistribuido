@@ -9,6 +9,8 @@ import java.io.*;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import com.sun.net.httpserver.HttpServer;
@@ -24,6 +26,11 @@ public class Gateway {
     private ExecutorService executorServiceHTTP;
     private ExecutorService executorServiceTCP;
     private ExecutorService executorServiceUDP;
+
+    // Verificadores de Heartbeat
+    private HeartBeat httpHeartbeatChecker;
+    private HeartBeat tcpHeartbeatChecker;
+    private HeartBeat udpHeartbeatChecker;
 
     // Mapas para armazenar os servidores registrados dinamicamente
     private final List<Integer> httpHandlerPorts = new ArrayList<>();
@@ -73,10 +80,29 @@ public class Gateway {
             // Inicializar servidor UDP
             executorServiceUDP = Executors.newFixedThreadPool(10);
             new Thread(this::iniciarServidorUDP).start();
+            
+            // Iniciar heartbeat para verificar servidores
+            iniciarHeartbeat();
 
         } catch (IOException e) {
             logger.error("Erro ao iniciar o Gateway: {}", e.getMessage(), e);
         }
+    }
+    
+    private void iniciarHeartbeat() {
+        ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
+        // Criar verificadores para HTTP, TCP e UDP
+        httpHeartbeatChecker = new HeartBeat(httpHandlerPorts, "http", this);
+        tcpHeartbeatChecker = new HeartBeat(tcpHandlerPorts, "tcp", this);
+        udpHeartbeatChecker = new HeartBeat(udpHandlerPorts, "udp", this);
+
+        // Agendar a verificação de heartbeat a cada 10 segundos
+        scheduler.scheduleAtFixedRate(() -> {
+            httpHeartbeatChecker.check();
+            tcpHeartbeatChecker.check();
+            udpHeartbeatChecker.check();
+        }, 10, 10, TimeUnit.SECONDS);
     }
 
     // Método para inicializar o servidor TCP
@@ -119,11 +145,11 @@ public class Gateway {
         do {
             port = httpHandlerPorts.get(roundRobinHTTP);
 
-            // Verificar se o servidor está ativo fazendo uma requisição de teste (por exemplo, uma requisição HEAD)
+            // Verificar se o servidor está ativo fazendo uma requisição de teste para o /heartbeat
             try {
-                URL url = new URL("http://localhost:" + port + "/healthcheck");  // Criar um endpoint de verificação de saúde (healthcheck) no servidor HTTP
+                URL url = new URL("http://localhost:" + port + "/heartbeat");  // Usar /heartbeat
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("HEAD");
+                conn.setRequestMethod("GET");
                 conn.setConnectTimeout(500);  // Timeout de 500ms
                 conn.setReadTimeout(500);
                 int responseCode = conn.getResponseCode();
@@ -135,16 +161,19 @@ public class Gateway {
                 } else {
                     // Se o servidor retornar um código de erro, tratá-lo como inativo
                     logger.warn("Servidor HTTP na porta " + port + " retornou código de resposta: " + responseCode + ". Removendo da lista.");
+                    removerServidor("http", port); // Remover o servidor da lista
                 }
 
             } catch (IOException e) {
                 // Se o servidor não responder, removê-lo da lista
                 logger.error("Servidor HTTP na porta " + port + " está inativo. Removendo da lista.");
-                httpHandlerPorts.remove(Integer.valueOf(port));
+                removerServidor("http", port); // Remover o servidor da lista
             }
 
-            // Atualizar o Round-Robin para o próximo servidor
-            roundRobinHTTP = (roundRobinHTTP + 1) % httpHandlerPorts.size();
+            // Se a lista tiver servidores restantes, atualize o round-robin
+            if (!httpHandlerPorts.isEmpty()) {
+                roundRobinHTTP = roundRobinHTTP % httpHandlerPorts.size();  // Garantir que o índice está correto
+            }
 
         } while (roundRobinHTTP != initialIndex && !httpHandlerPorts.isEmpty());
 
@@ -155,6 +184,8 @@ public class Gateway {
 
         return getNextHTTPHandlerPort();  // Tentar novamente com os servidores ativos
     }
+
+
 
 
     // Roteamento via TCP
@@ -198,7 +229,7 @@ public class Gateway {
     }
 
 
-    // Roteamento via UDP no Gateway com fallback
+    // Roteamento via UDP no Gateway com verificação de heartbeat
     public synchronized int getNextUDPHandlerPort() {
         if (udpHandlerPorts.isEmpty()) {
             throw new IllegalStateException("Nenhum servidor UDP disponível.");
@@ -256,9 +287,6 @@ public class Gateway {
     }
 
 
-
-
-    
  // Método para remover servidores inativos (HTTP, TCP ou UDP)
     public synchronized void removerServidor(String tipo, int porta) {
         logger.info("Removendo servidor " + tipo.toUpperCase() + " na porta: " + porta);
@@ -602,10 +630,6 @@ public class Gateway {
         logger.info("Porta removida: " + porta);
     }
 
-
-
-
-
     // Enviar dados via UDP para o servidor interno
     private String enviarParaServidorInternoUDP(String dados) throws IOException {
         int porta;
@@ -633,6 +657,4 @@ public class Gateway {
             throw new IOException("Erro: Nenhum servidor UDP disponível.");
         }
     }
-
-
 }

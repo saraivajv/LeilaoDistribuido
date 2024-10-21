@@ -37,7 +37,7 @@ public class HTTPHandler {
             HttpServer server = HttpServer.create(new InetSocketAddress(porta), 0);
             server.createContext("/cadastrarItem", new CadastrarItemHandler());
             server.createContext("/registrarLance", new RegistrarLanceHandler());
-            server.createContext("/healthcheck", new HealthCheckHandler());  // Adiciona o contexto de healthcheck
+            server.createContext("/heartbeat", new HeartbeatHandler());  // Adiciona o contexto de heartbeat
             server.setExecutor(null); // Cria um executor padrão
             server.start();
             System.out.println("Servidor HTTP rodando na porta " + porta);
@@ -53,8 +53,8 @@ public class HTTPHandler {
         }
     }
     
-    // Novo handler para o healthcheck
-    static class HealthCheckHandler implements HttpHandler {
+    // Novo handler para o heartbeat
+    static class HeartbeatHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             // Responder com status 200 OK

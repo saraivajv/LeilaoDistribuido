@@ -5,10 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.Socket;
-import java.net.ServerSocket;
-import java.net.URL;
+import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,6 +47,14 @@ public class TCPHandler {
         }
     }
 
+    // Adiciona um novo método de healthcheck para o servidor TCP
+    public static void healthCheck(Socket cliente) throws IOException {
+        try (BufferedWriter out = new BufferedWriter(new OutputStreamWriter(cliente.getOutputStream(), StandardCharsets.UTF_8))) {
+            out.write("pong\n");
+            out.flush();
+        }
+    }
+
     // Registrar o servidor no Gateway
     private static void registrarNoGateway(int porta) {
         try {
@@ -73,6 +78,7 @@ public class TCPHandler {
         }
     }
 
+    // Handler para as conexões dos clientes TCP
     static class ClienteTCPHandler implements Runnable {
         private final Socket cliente;
 
@@ -87,6 +93,13 @@ public class TCPHandler {
 
                 String mensagem = in.readLine();
                 if (mensagem != null) {
+                    // Verifica se é um healthcheck
+                    if ("ping".equalsIgnoreCase(mensagem.trim())) {
+                        logger.info("Healthcheck recebido. Respondendo com pong.");
+                        TCPHandler.healthCheck(cliente);
+                        return;
+                    }
+
                     logger.info("Requisição recebida no TCPHandler: " + mensagem);
 
                     // Adicionar a requisição na fila do batch
